@@ -23,7 +23,7 @@ https://github.com/jac3km4/redscript-dap/assets/11986158/728a3de0-1d6d-47d4-8e9a
 - stepping might appear to be stuck on a line sometimes, but it's not - it's usually due to the
   fact that the line you're at contains a lot of function calls which might be non-obvious like
   casts and calls to operators, the debugger will sequentially step over them
-- you cannot manually pause or access threads, use breakpoints
+- you cannot manually pause or access threads, use breakpoints instead
 - the game currently doesn't give up focus on breakpoints, I recommend either running the
   game in windowed mode next to VSCode or running them on separate screens
 - using 'Step Out' while in a function invoked directly from CET will cause the debugger to hang up
