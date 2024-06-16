@@ -21,8 +21,8 @@ https://github.com/jac3km4/redscript-dap/assets/11986158/728a3de0-1d6d-47d4-8e9a
     - intrinsics like `Equals`, `ArrayPush` and so on are not function calls and will not stop the
       debugger
 - stepping might appear to be stuck on a line sometimes, but it's not - it's usually due to the
-  fact that the line that contains a lot of function calls which might be non-obvious like casts
-  and calls to operators, the debugger will sequentially step over them
+  fact that the line you're at contains a lot of function calls which might be non-obvious like
+  casts and calls to operators, the debugger will sequentially step over them
 - you cannot manually pause or access threads, use breakpoints
 - the game currently doesn't give up focus on breakpoints, I recommend either running the
   game in windowed mode next to VSCode or running them on separate screens
