@@ -306,10 +306,14 @@ where
                         };
                         let frame = unsafe { frame.as_ref() };
 
-                        let fns = CONTROL.functions();
                         let name = frame.func().name().as_str();
                         let (name, _) = name.split_once(';').unwrap_or((name, ""));
+                        let name = match frame.func().parent() {
+                            Some(class) => format!("{}::{}", class.name().as_str(), name),
+                            None => name.to_owned(),
+                        };
 
+                        let fns = CONTROL.functions();
                         let source = fns.get(FunctionId::from_func(frame.func()));
 
                         let (source, line) = match (source, line) {
@@ -332,7 +336,7 @@ where
 
                         types::StackFrame {
                             id: i as i64,
-                            name: name.to_owned(),
+                            name,
                             source,
                             line,
                             ..Default::default()
