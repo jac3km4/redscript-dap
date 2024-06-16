@@ -410,7 +410,7 @@ where
                         self.named_variables(frame.params(), frame.func().params().iter().copied())
                             .collect::<Vec<_>>()
                     }
-                    Scope::Array(ptr, typ) => self.array_variables(ptr, typ),
+                    Scope::Array(ptr, typ) => self.array_variables(ptr, typ).collect::<Vec<_>>(),
                     Scope::Object(ptr, typ) => {
                         let props = typ.all_properties().filter(|p| p.is_in_value_holder());
                         self.named_variables(ptr, props).collect::<Vec<_>>()
@@ -449,11 +449,14 @@ where
         })
     }
 
-    fn array_variables(&mut self, value: ValuePtr, typ: &ArrayType) -> Vec<types::Variable> {
+    fn array_variables<'a>(
+        &'a mut self,
+        value: ValuePtr,
+        typ: &'a ArrayType,
+    ) -> impl Iterator<Item = types::Variable> + 'a {
         let inner = typ.inner_type();
         (0..unsafe { typ.length(value) })
-            .map(|i| self.variable(i, unsafe { typ.element(value, i) }, inner))
-            .collect()
+            .map(move |i| self.variable(i, unsafe { typ.element(value, i) }, inner))
     }
 
     fn variable(
