@@ -569,14 +569,15 @@ impl fmt::Display for ValueFormatter<'_> {
                 return write!(f, "null");
             };
             if !self.visited.borrow_mut().insert(inst as _) {
-                return write!(f, "<recursive>");
+                return write!(f, "<cyclic>");
             }
             write!(f, "{{",)?;
-            for prop in inst
+
+            let mut prop_it = inst
                 .class()
                 .all_properties()
-                .filter(|p| p.is_in_value_holder())
-            {
+                .filter(|p| p.is_in_value_holder());
+            for prop in prop_it.by_ref().take(8) {
                 let inner = Self {
                     value: unsafe { prop.value(inst.fields()) },
                     typ: prop.type_(),
@@ -584,6 +585,10 @@ impl fmt::Display for ValueFormatter<'_> {
                 };
                 write!(f, "{}: {}, ", prop.name().as_str(), inner)?;
             }
+            if prop_it.next().is_some() {
+                write!(f, "...")?;
+            }
+
             write!(f, "}}")
         } else {
             write!(f, "{}", unsafe { self.typ.to_string(self.value) })
