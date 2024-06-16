@@ -20,4 +20,4 @@ https://github.com/jac3km4/redscript-dap/assets/11986158/728a3de0-1d6d-47d4-8e9a
     - intrinsics like `Equals`, `ArrayPush` and so on are not function calls and will not stop the debugger
 - stepping might appear to be stuck on a line sometimes, but it's not - it's usually due to the fact that the line that contains a lot of function calls which might be non-obvious like casts and calls to operators, the debugger will sequentially step over them
 - you cannot manually pause or access threads, use breakpoints
-- stepping out of a function invoked directly from CET will cause the debugger to hang up and requires a restart
+- using 'Step Out' while in a function invoked directly from CET will cause the debugger to hang up and requires a restart
