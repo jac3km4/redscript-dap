@@ -1,6 +1,8 @@
 # redscript-dap
 Debug adapter server implementation for Cyberpunk 2077 scripts.
 
+https://github.com/jac3km4/redscript-dap/assets/11986158/728a3de0-1d6d-47d4-8e9a-737a7a58a813
+
 # requirements
 - [redscript](https://github.com/jac3km4/redscript) 0.5.25 or newer
 - [redscript IDE VSCode extension](https://marketplace.visualstudio.com/items?itemName=jac3km4.redscript-ide-vscode) 0.2.5 or newer
