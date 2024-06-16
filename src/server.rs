@@ -5,16 +5,12 @@ use std::net::{SocketAddr, TcpListener};
 use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::{fmt, io, ptr, thread};
+use std::{fmt, io, thread};
 
 use dap::prelude::*;
 use dap::server::ServerOutput;
 use parking::{Parker, Unparker};
-use red4rs::{
-    ArrayType, IScriptable, InvokeStatic, InvokeVirtual, Property, Type, ValueContainer, ValuePtr,
-    CALL_INSTR_SIZE, OPCODE_SIZE,
-};
-use responses::{ScopesResponse, SetBreakpointsResponse};
+use red4rs::{ArrayType, IScriptable, Property, Type, ValueContainer, ValuePtr};
 use thiserror::Error;
 
 use crate::control::{FunctionId, StepMode};
@@ -72,8 +68,8 @@ where
 
 impl<R, W> DebugSession<R, W>
 where
-    R: io::Read + Send,
-    W: io::Write + Send,
+    R: io::Read,
+    W: io::Write,
 {
     fn new(server: Server<R, W>) -> Self {
         Self {
@@ -82,7 +78,11 @@ where
         }
     }
 
-    fn run(server: Server<R, W>, receiver: &Receiver<DebugEvent>) -> DynResult<()> {
+    fn run(server: Server<R, W>, receiver: &Receiver<DebugEvent>) -> DynResult<()>
+    where
+        R: Send,
+        W: Send,
+    {
         let mut this = Self::new(server);
         let state = this.state.clone();
         let output = this.server.output.clone();
@@ -112,11 +112,16 @@ where
             Ok(())
         });
 
+        CONTROL.reset();
         // clear the in-progress event if any
         state.clear_poison();
         if let Some(ev) = state.write().unwrap().take_event() {
             ev.unpark();
         };
+        // allow all waiting threads to continue
+        while let Ok(ev) = receiver.try_recv() {
+            ev.unpark();
+        }
 
         result
     }
@@ -148,11 +153,7 @@ where
         Ok(())
     }
 
-    fn handle_req(&mut self, req: Request) -> DynResult<Outcome>
-    where
-        R: io::Read,
-        W: io::Write,
-    {
+    fn handle_req(&mut self, req: Request) -> DynResult<Outcome> {
         match &req.command {
             Command::Attach(_) => {}
             Command::ConfigurationDone => {
@@ -217,7 +218,7 @@ where
                 let params = guard.add_scope(Scope::Params(frame));
                 let locals = guard.add_scope(Scope::Locals(frame));
 
-                let res = req.success(ResponseBody::Scopes(ScopesResponse {
+                let res = req.success(ResponseBody::Scopes(responses::ScopesResponse {
                     scopes: vec![
                         types::Scope {
                             name: "Arguments".to_owned(),
@@ -237,9 +238,11 @@ where
             }
             Command::SetBreakpoints(args) => {
                 let Some(path) = args.source.path.as_deref() else {
-                    let res = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                        breakpoints: vec![],
-                    }));
+                    let res = req.success(ResponseBody::SetBreakpoints(
+                        responses::SetBreakpointsResponse {
+                            breakpoints: vec![],
+                        },
+                    ));
                     self.server.respond(res)?;
                     return Ok(Outcome::Continue);
                 };
@@ -250,8 +253,7 @@ where
                     .unwrap_or_default()
                     .iter()
                     .filter_map(|bp| {
-                        // DAP uses 1-based line numbers
-                        let line = bp.line as u16 - 1;
+                        let line = bp.line as u16;
                         let func = CONTROL.functions().get_by_loc(path, line.into())?;
                         let pending = BreakpointKey::new(func, line);
                         let bp = types::Breakpoint {
@@ -272,9 +274,9 @@ where
                     bp_guard.add(bp);
                 }
 
-                let res = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                    breakpoints,
-                }));
+                let res = req.success(ResponseBody::SetBreakpoints(
+                    responses::SetBreakpointsResponse { breakpoints },
+                ));
                 self.server.respond(res)?;
             }
 
@@ -290,46 +292,49 @@ where
                     .filter(|&l| l != 0)
                     .unwrap_or(guard.frames().len())
                     .min(guard.frames().len());
-                let top = guard.frames().first().map(|&StackFramePtr(ptr)| ptr);
+                let range = start..end;
 
                 let stack_frames = guard.frames()[start..end]
                     .iter()
-                    .enumerate()
-                    .map(|(i, frame)| {
-                        let frame = unsafe { frame.as_ref() };
-
-                        let offset = if top.is_some_and(|top| ptr::eq(top, frame)) {
-                            // the top frame will be pointed at a call instruction + OPCODE_SIZE
-                            -OPCODE_SIZE
-                        } else {
-                            // the parent frames will be pointed at the beginning of the next instruction
-                            -OPCODE_SIZE - CALL_INSTR_SIZE - OPCODE_SIZE
-                        };
-
+                    .zip(range)
+                    .map(|(frame, i)| {
                         let line = unsafe {
                             frame
-                                .instr_at::<InvokeStatic>(offset)
+                                .as_invoke_static()
                                 .map(|i| i.line)
-                                .or_else(|| frame.instr_at::<InvokeVirtual>(offset).map(|i| i.line))
+                                .or_else(|| frame.as_invoke_virtual().map(|i| i.line))
                         };
+                        let frame = unsafe { frame.as_ref() };
 
                         let fns = CONTROL.functions();
-                        let source = fns.get(FunctionId::from_func(frame.func()));
                         let name = frame.func().name().as_str();
                         let (name, _) = name.split_once(';').unwrap_or((name, ""));
+
+                        let source = fns.get(FunctionId::from_func(frame.func()));
+
+                        let (source, line) = match (source, line) {
+                            (Some(source), Some(line)) => {
+                                let path = source.file_path();
+                                let name = Path::new(path)
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned());
+                                (
+                                    Some(types::Source {
+                                        name,
+                                        path: Some(path.to_owned()),
+                                        ..Default::default()
+                                    }),
+                                    line as i64,
+                                )
+                            }
+                            _ => (None, 0),
+                        };
 
                         types::StackFrame {
                             id: i as i64,
                             name: name.to_owned(),
-                            source: source.map(|s| types::Source {
-                                name: Path::new(s.file_path())
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().into_owned()),
-                                path: Some(s.file_path().to_owned()),
-                                ..Default::default()
-                            }),
-                            // DAP uses 1-based line numbers
-                            line: line.unwrap_or(0) as i64 + 1,
+                            source,
+                            line,
                             ..Default::default()
                         }
                     })
@@ -355,8 +360,9 @@ where
                 let Some(ev) = self.state.write().unwrap().take_event() else {
                     return Err(Box::new(Error::UnexpectedRequest));
                 };
-                // TODO: step out is currently broken so this will just step over
-                CONTROL.set_step_mode(StepMode::StepOver);
+                if unsafe { ev.frame().as_ref() }.parent().is_some() {
+                    CONTROL.set_step_mode(StepMode::StepOut);
+                }
                 ev.unpark();
 
                 let res = req.success(ResponseBody::StepOut);
@@ -382,18 +388,36 @@ where
                 let mut variables = match scope {
                     Scope::Locals(frame) => {
                         let frame = unsafe { frame.as_ref() };
-                        self.named_variables(frame.locals(), frame.func().locals().iter().copied())
+                        let mut variables = vec![];
+
+                        if let Some(this) = frame.context().filter(|_| !frame.func().is_static()) {
+                            let scope = Scope::Object(this.fields(), this.class());
+                            let variable = self.state.write().unwrap().add_scope(scope);
+                            variables.push(types::Variable {
+                                name: "this".to_owned(),
+                                variables_reference: variable,
+                                ..Default::default()
+                            });
+                        }
+
+                        let locals = self
+                            .named_variables(frame.locals(), frame.func().locals().iter().copied());
+                        variables.extend(locals);
+                        variables
                     }
                     Scope::Params(frame) => {
                         let frame = unsafe { frame.as_ref() };
                         self.named_variables(frame.params(), frame.func().params().iter().copied())
+                            .collect::<Vec<_>>()
                     }
                     Scope::Array(ptr, typ) => self.array_variables(ptr, typ),
                     Scope::Object(ptr, typ) => {
                         let props = typ.all_properties().filter(|p| p.is_in_value_holder());
-                        self.named_variables(ptr, props)
+                        self.named_variables(ptr, props).collect::<Vec<_>>()
                     }
-                    Scope::Struct(ptr, typ) => self.named_variables(ptr, typ.all_properties()),
+                    Scope::Struct(ptr, typ) => self
+                        .named_variables(ptr, typ.all_properties())
+                        .collect::<Vec<_>>(),
                 };
                 let start = vars.start.unwrap_or(0) as usize;
                 let end = vars
@@ -415,17 +439,14 @@ where
     }
 
     fn named_variables<'a>(
-        &mut self,
+        &'a mut self,
         container: ValueContainer,
-        props: impl IntoIterator<Item = &'a Property>,
-    ) -> Vec<types::Variable> {
-        props
-            .into_iter()
-            .map(|prop| {
-                let val = unsafe { prop.value(container) };
-                self.variable(prop.name().as_str(), val, prop.type_())
-            })
-            .collect()
+        props: impl IntoIterator<Item = &'a Property> + 'a,
+    ) -> impl Iterator<Item = types::Variable> + 'a {
+        props.into_iter().map(move |prop| {
+            let val = unsafe { prop.value(container) };
+            self.variable(prop.name().as_str(), val, prop.type_())
+        })
     }
 
     fn array_variables(&mut self, value: ValuePtr, typ: &ArrayType) -> Vec<types::Variable> {
@@ -506,8 +527,8 @@ impl DebugEvent {
     }
 
     #[inline]
-    pub fn frame(&self) -> &StackFramePtr {
-        &self.frame
+    pub fn frame(&self) -> StackFramePtr {
+        self.frame
     }
 
     #[inline]

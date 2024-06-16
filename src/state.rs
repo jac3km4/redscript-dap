@@ -1,3 +1,5 @@
+use std::iter;
+
 use red4rs::{ArrayType, Class, ValueContainer, ValuePtr};
 use slab::Slab;
 
@@ -14,6 +16,7 @@ pub struct DebugState {
 impl DebugState {
     #[inline]
     pub fn scope(&self, id: i64) -> Option<&Scope> {
+        // we avoid using 0 because DAP uses 0 to indicate an empty scope
         self.scopes.get((id - 1) as usize)
     }
 
@@ -33,12 +36,14 @@ impl DebugState {
     }
 
     pub fn reset(&mut self, ev: DebugEvent) {
-        let frame = unsafe { ev.frame().as_ref() };
+        let frame = ev.frame();
+        let parents = unsafe { frame.as_ref() }
+            .parent_iter()
+            .map(|f| StackFramePtr::PostCall(f));
 
         self.scopes.clear();
         self.frames.clear();
-        self.frames
-            .extend(frame.parent_iter().map(|f| StackFramePtr(f)));
+        self.frames.extend(iter::once(frame).chain(parents));
         self.current = Some(ev);
     }
 }

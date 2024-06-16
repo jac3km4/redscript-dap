@@ -12,7 +12,7 @@ slab = "0.4"
 parking = "2"
 static-rc = "0.6"
 dap = "0.4.1-alpha1"
-red4rs = { git = "https://github.com/jac3km4/red4rs", rev = "944eebb" }
+red4rs = { git = "https://github.com/jac3km4/red4rs", rev = "78a63c6" }
 
 [lints.rust]
 warnings = "warn"

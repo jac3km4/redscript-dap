@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -60,9 +61,16 @@ impl DebugControl {
     }
 
     #[inline]
-    pub fn set_last_break_frame(&self, frame: &StackFrame) {
+    pub fn set_last_break_frame(&self, frame: *const StackFrame) {
+        self.last_break_frame.store(frame as _, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn reset(&self) {
+        self.set_step_mode(StepMode::None);
         self.last_break_frame
-            .store(frame as *const _ as _, Ordering::Relaxed);
+            .store(ptr::null_mut(), Ordering::Relaxed);
+        self.breakpoints_mut().clear();
     }
 }
 
@@ -100,6 +108,11 @@ impl Breakpoints {
         for key in keys {
             self.breakpoints.remove(&key);
         }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.breakpoints.clear();
     }
 }
 

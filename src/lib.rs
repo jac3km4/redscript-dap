@@ -6,7 +6,7 @@ use control::{BreakpointKey, DebugControl, FunctionId, SourceRef, StepMode};
 use red4rs::{
     export_plugin, hashes, hooks, wcstr, CName, Function, GameApp, IScriptable, Instr,
     InvokeStatic, InvokeVirtual, OpcodeHandler, Plugin, PluginSyntax, SdkEnv, SemVer, StackFrame,
-    StateListener, StateType, U16CStr, VoidPtr, OPCODE_SIZE,
+    StateListener, StateType, U16CStr, VoidPtr, CALL_INSTR_SIZE, OPCODE_SIZE,
 };
 use server::{DebugEvent, EventCause, ServerHandle};
 
@@ -143,11 +143,13 @@ unsafe extern "C" fn on_invoke_static(
         return cb(i, f, a3, a4);
     }
 
-    if let Some(i) = frame.instr_at::<InvokeStatic>(-OPCODE_SIZE) {
-        handle_call(frame, i.line);
+    if let Some(instr) = frame.instr_at::<InvokeStatic>(-OPCODE_SIZE) {
+        pre_call(frame, instr.line);
+        cb(i, f, a3, a4);
+        post_call(frame, instr.line);
+    } else {
+        cb(i, f, a3, a4);
     }
-
-    cb(i, f, a3, a4)
 }
 
 unsafe extern "C" fn on_invoke_virtual(
@@ -162,14 +164,16 @@ unsafe extern "C" fn on_invoke_virtual(
         return cb(i, f, a3, a4);
     }
 
-    if let Some(i) = frame.instr_at::<InvokeVirtual>(-OPCODE_SIZE) {
-        handle_call(frame, i.line);
+    if let Some(instr) = frame.instr_at::<InvokeVirtual>(-OPCODE_SIZE) {
+        pre_call(frame, instr.line);
+        cb(i, f, a3, a4);
+        post_call(frame, instr.line);
+    } else {
+        cb(i, f, a3, a4);
     }
-
-    cb(i, f, a3, a4)
 }
 
-fn handle_call(frame: &StackFrame, line: u16) {
+fn pre_call(frame: &StackFrame, line: u16) {
     let key = BreakpointKey::new(FunctionId::from_func(frame.func()), line);
 
     let step_mode = CONTROL.get_step_mode();
@@ -194,16 +198,26 @@ fn handle_call(frame: &StackFrame, line: u16) {
     };
 
     if let Some(cause) = break_cause {
-        breakpoint(key, cause, frame);
+        breakpoint(key, cause, StackFramePtr::PreCall(frame));
     }
 }
 
-fn breakpoint(key: BreakpointKey, cause: EventCause, frame: &StackFrame) {
-    CONTROL.set_last_break_frame(frame);
-    CONTROL.set_step_mode(StepMode::None);
+fn post_call(frame: &StackFrame, line: u16) {
+    if CONTROL.get_step_mode() == StepMode::StepOut {
+        let last_parent = CONTROL.get_last_break_frame().and_then(StackFrame::parent);
+        if last_parent.map_or(false, |parent| ptr::eq(parent, frame)) {
+            let key = BreakpointKey::new(FunctionId::from_func(frame.func()), line);
+            breakpoint(key, EventCause::Step, StackFramePtr::PostCall(frame));
+        }
+    }
+}
 
-    let (ev, parker) = DebugEvent::new(key, cause, StackFramePtr(frame));
+fn breakpoint(key: BreakpointKey, cause: EventCause, frame: StackFramePtr) {
+    let (ev, parker) = DebugEvent::new(key, cause, frame);
     if SERVER.sender().send(ev).is_ok() {
+        CONTROL.set_last_break_frame(frame.as_ptr());
+        CONTROL.set_step_mode(StepMode::None);
+
         parker.park();
     }
 }
@@ -231,11 +245,39 @@ struct SourceFileInfo {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct StackFramePtr(*const StackFrame);
+enum StackFramePtr {
+    PreCall(*const StackFrame),
+    PostCall(*const StackFrame),
+}
 
 impl StackFramePtr {
+    #[inline]
     pub unsafe fn as_ref(&self) -> &StackFrame {
-        unsafe { &*self.0 }
+        unsafe { &*self.as_ptr() }
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *const StackFrame {
+        match self {
+            StackFramePtr::PreCall(ptr) | StackFramePtr::PostCall(ptr) => *ptr,
+        }
+    }
+
+    #[inline]
+    pub unsafe fn as_invoke_static(&self) -> Option<&InvokeStatic> {
+        unsafe { self.as_ref() }.instr_at::<InvokeStatic>(self.call_offset())
+    }
+
+    #[inline]
+    pub unsafe fn as_invoke_virtual(&self) -> Option<&InvokeVirtual> {
+        unsafe { self.as_ref() }.instr_at::<InvokeVirtual>(self.call_offset())
+    }
+
+    fn call_offset(&self) -> isize {
+        match self {
+            StackFramePtr::PreCall(_) => -OPCODE_SIZE,
+            StackFramePtr::PostCall(_) => -OPCODE_SIZE - CALL_INSTR_SIZE - OPCODE_SIZE,
+        }
     }
 }
 
