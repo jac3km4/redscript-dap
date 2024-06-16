@@ -16,4 +16,5 @@ Debug adapter server implementation for Cyberpunk 2077 scripts.
 # known issues
 - the debugger currently only stops at function calls, breakpoints set at lines that do not contain any function calls will do nothing, which may result in surprising jumps sometimes
     - intrinsics like `Equals`, `ArrayPush` and so on are not function calls and will not stop the debugger
+- you cannot manually pause or access threads, use breakpoints
 - stepping out of a function invoked directly from CET will cause the debugger to hang up and requires a restart
