@@ -65,7 +65,6 @@ impl DebugControl {
         self.last_break_frame.store(frame as _, Ordering::Relaxed);
     }
 
-    #[inline]
     pub fn reset(&self) {
         self.set_step_mode(StepMode::None);
         self.last_break_frame
@@ -146,7 +145,6 @@ impl FunctionMapping {
         self.fn_to_source.get(&key).map(StaticRc::as_ref)
     }
 
-    #[inline]
     pub fn add(&mut self, id: FunctionId, source: SourceRef) {
         let (l, r) = StaticRc::split(StaticRc::new(source));
 
@@ -183,6 +181,7 @@ pub struct BreakpointKey {
 }
 
 impl BreakpointKey {
+    #[inline]
     pub fn new(func: FunctionId, line: u16) -> Self {
         Self { func, line }
     }
