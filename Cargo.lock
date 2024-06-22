@@ -276,7 +276,7 @@ dependencies = [
  "parking",
  "red4rs",
  "slab",
- "static-rc",
+ "static_assertions",
  "thiserror",
 ]
 
@@ -381,10 +381,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "static-rc"
-version = "0.6.1"
+name = "static_assertions"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91d0104a7b28aeda24b30919f83222570111ac0bf1aab23aaffb8f59330e654"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "syn"

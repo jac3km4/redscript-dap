@@ -1,11 +1,14 @@
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
-use std::ptr;
+use std::ffi::OsStr;
+use std::path::Path;
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::{env, ptr};
 
 use red4rs::{CName, Class, Function, StackFrame};
-use static_rc::StaticRc;
+
+use crate::SourceFileInfo;
 
 #[derive(Debug)]
 pub struct DebugControl {
@@ -117,8 +120,9 @@ impl Breakpoints {
 
 #[derive(Debug)]
 pub struct FunctionMapping {
-    source_to_fn: BTreeMap<StaticRc<SourceRef, 1, 2>, FunctionId>,
-    fn_to_source: BTreeMap<FunctionId, StaticRc<SourceRef, 1, 2>>,
+    source_to_fn: BTreeMap<SourceRef, FunctionId>,
+    fn_to_source: BTreeMap<FunctionId, SourceRef>,
+    index_to_path: BTreeMap<u32, Arc<str>>,
 }
 
 impl FunctionMapping {
@@ -127,6 +131,7 @@ impl FunctionMapping {
         Self {
             source_to_fn: BTreeMap::new(),
             fn_to_source: BTreeMap::new(),
+            index_to_path: BTreeMap::new(),
         }
     }
 
@@ -142,23 +147,53 @@ impl FunctionMapping {
 
     #[inline]
     pub fn get(&self, key: FunctionId) -> Option<&SourceRef> {
-        self.fn_to_source.get(&key).map(StaticRc::as_ref)
+        self.fn_to_source.get(&key)
     }
 
-    pub fn add(&mut self, id: FunctionId, source: SourceRef) {
-        let (l, r) = StaticRc::split(StaticRc::new(source));
+    pub fn add(&mut self, id: FunctionId, source: &SourceFileInfo, line: u32) {
+        let file_path = self.add_source(source);
+        let source = SourceRef::new_unchecked(file_path, line);
 
-        if let Some(ps1) = self.fn_to_source.insert(id, r) {
-            let (ps2, _) = self.source_to_fn.remove_entry(&ps1).unwrap();
-            // drop both at the same time
-            StaticRc::<SourceRef, 2, 2>::join(ps1, ps2);
+        if let Some(old) = self.fn_to_source.insert(id, source.clone()) {
+            self.source_to_fn.remove(&old).unwrap();
         }
-        if let Some((ps1, pid)) = self.source_to_fn.remove_entry(&l) {
-            let ps2 = self.fn_to_source.remove(&pid).unwrap();
-            // drop both at the same time
-            StaticRc::<SourceRef, 2, 2>::join(ps1, ps2);
+
+        if let Some(old) = self.source_to_fn.insert(source, id) {
+            self.fn_to_source.remove(&old).unwrap();
         }
-        self.source_to_fn.insert(l, id);
+    }
+
+    fn add_source(&mut self, source: &SourceFileInfo) -> Arc<str> {
+        self.index_to_path
+            .entry(source.index)
+            .or_insert_with(|| {
+                let path = Path::new(source.path.as_ref());
+                let mut path: Arc<str> = if path.extension() != Some(OsStr::new("reds")) {
+                    // if it's not redscript we point to the redmod scripts
+                    (|| {
+                        let res = env::current_exe()
+                            .ok()?
+                            .parent()?
+                            .parent()?
+                            .parent()?
+                            .join("tools")
+                            .join("redmod")
+                            .join("scripts")
+                            .join(path);
+                        Some(res.to_string_lossy().into())
+                    })()
+                    .unwrap_or_else(|| source.path.as_ref().into())
+                } else {
+                    source.path.as_ref().into()
+                };
+                if path.is_ascii() {
+                    Arc::get_mut(&mut path).unwrap().make_ascii_lowercase();
+                    path
+                } else {
+                    path.to_lowercase().into()
+                }
+            })
+            .clone()
     }
 
     fn get_fns_preceding_line<'a>(
@@ -189,15 +224,20 @@ impl BreakpointKey {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SourceRef {
-    file_path: String,
+    file_path: Arc<str>,
     line: Reverse<u32>,
 }
 
 impl SourceRef {
     #[inline]
     pub fn new(file_path: impl AsRef<str>, line: u32) -> Self {
+        Self::new_unchecked(file_path.as_ref().to_lowercase().into(), line)
+    }
+
+    #[inline]
+    fn new_unchecked(file_path: Arc<str>, line: u32) -> Self {
         Self {
-            file_path: file_path.as_ref().to_lowercase(),
+            file_path,
             line: Reverse(line),
         }
     }

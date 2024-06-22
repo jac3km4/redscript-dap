@@ -1,14 +1,13 @@
-use std::ffi::OsStr;
-use std::path::Path;
-use std::{env, mem, panic, ptr};
+use std::{mem, panic, ptr};
 
-use control::{BreakpointKey, DebugControl, FunctionId, SourceRef, StepMode};
+use control::{BreakpointKey, DebugControl, FunctionId, StepMode};
 use red4rs::{
     export_plugin, hashes, hooks, wcstr, CName, Function, GameApp, IScriptable, Instr,
     InvokeStatic, InvokeVirtual, OpcodeHandler, Plugin, PluginSyntax, SdkEnv, SemVer, StackFrame,
     StateListener, StateType, U16CStr, VoidPtr, CALL_INSTR_SIZE, OPCODE_SIZE,
 };
 use server::{DebugEvent, EventCause, ServerHandle};
+use static_assertions::const_assert_eq;
 
 mod control;
 mod server;
@@ -102,31 +101,9 @@ unsafe extern "C" fn on_bind_function(
     let func = &*info.func;
     let source = &*info.source_info;
 
-    let path = Path::new(source.path.as_ref());
-
-    // if it's not redscript we point to the redmod scripts
-    let path = if path.extension() != Some(OsStr::new("reds")) {
-        (|| {
-            let res = env::current_exe()
-                .ok()?
-                .parent()?
-                .parent()?
-                .parent()?
-                .join("tools")
-                .join("redmod")
-                .join("scripts")
-                .join(path);
-            Some(res.clone())
-        })()
-        .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    };
-
-    CONTROL.functions_mut().add(
-        FunctionId::from_func(func),
-        SourceRef::new(path.to_string_lossy(), info.source_line),
-    );
+    CONTROL
+        .functions_mut()
+        .add(FunctionId::from_func(func), source, info.source_line);
 
     ret
 }
@@ -233,16 +210,20 @@ struct FunctionInfo {
     source_line: u32,
 }
 
+const_assert_eq!(mem::size_of::<FunctionInfo>(), 208);
+
 #[repr(C)]
 struct SourceFileInfo {
     vfs: VoidPtr,
     name: CName,
-    hash: u32,
+    unk: u64,
     crc: u32,
     index: u32,
-    path_hash: u64,
+    path_hash: u32,
     path: red4rs::String,
 }
+
+const_assert_eq!(mem::size_of::<SourceFileInfo>(), 72);
 
 #[derive(Debug, Clone, Copy)]
 enum StackFramePtr {
