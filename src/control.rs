@@ -122,7 +122,7 @@ impl Breakpoints {
 pub struct FunctionMapping {
     source_to_fn: BTreeMap<SourceRef, FunctionId>,
     fn_to_source: BTreeMap<FunctionId, SourceRef>,
-    index_to_path: BTreeMap<u32, Arc<str>>,
+    hash_to_path: BTreeMap<u32, Arc<str>>,
 }
 
 impl FunctionMapping {
@@ -131,7 +131,7 @@ impl FunctionMapping {
         Self {
             source_to_fn: BTreeMap::new(),
             fn_to_source: BTreeMap::new(),
-            index_to_path: BTreeMap::new(),
+            hash_to_path: BTreeMap::new(),
         }
     }
 
@@ -164,35 +164,9 @@ impl FunctionMapping {
     }
 
     fn add_source(&mut self, source: &SourceFileInfo) -> Arc<str> {
-        self.index_to_path
-            .entry(source.index)
-            .or_insert_with(|| {
-                let path = Path::new(source.path.as_ref());
-                let mut path: Arc<str> = if path.extension() != Some(OsStr::new("reds")) {
-                    // if it's not redscript we point to the redmod scripts
-                    (|| {
-                        let res = env::current_exe()
-                            .ok()?
-                            .parent()?
-                            .parent()?
-                            .parent()?
-                            .join("tools")
-                            .join("redmod")
-                            .join("scripts")
-                            .join(path);
-                        Some(res.to_string_lossy().into())
-                    })()
-                    .unwrap_or_else(|| source.path.as_ref().into())
-                } else {
-                    source.path.as_ref().into()
-                };
-                if path.is_ascii() {
-                    Arc::get_mut(&mut path).unwrap().make_ascii_lowercase();
-                    path
-                } else {
-                    path.to_lowercase().into()
-                }
-            })
+        self.hash_to_path
+            .entry(source.path_hash)
+            .or_insert_with(|| adapt_path(source.path.as_ref()))
             .clone()
     }
 
@@ -287,5 +261,33 @@ impl TryFrom<u8> for StepMode {
             3 => Ok(Self::StepIn),
             _ => Err(()),
         }
+    }
+}
+
+fn adapt_path(path_str: &str) -> Arc<str> {
+    let path = Path::new(path_str);
+    let mut path: Arc<str> = if path.extension() != Some(OsStr::new("reds")) {
+        // if it's not redscript we point to the redmod scripts
+        (|| {
+            let res = env::current_exe()
+                .ok()?
+                .parent()?
+                .parent()?
+                .parent()?
+                .join("tools")
+                .join("redmod")
+                .join("scripts")
+                .join(path);
+            Some(res.to_string_lossy().into())
+        })()
+        .unwrap_or_else(|| path_str.into())
+    } else {
+        path_str.into()
+    };
+    if path.is_ascii() {
+        Arc::get_mut(&mut path).unwrap().make_ascii_lowercase();
+        path
+    } else {
+        path.to_lowercase().into()
     }
 }
