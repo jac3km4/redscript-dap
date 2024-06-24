@@ -14,10 +14,7 @@ mod server;
 mod state;
 
 static CONTROL: DebugControl = DebugControl::new();
-static SERVER: ServerHandle = ServerHandle::new(DEBUG_PORT);
-
-// the TCP port where the debugger server will listen
-const DEBUG_PORT: u16 = 8435;
+static SERVER: ServerHandle = ServerHandle::new();
 
 // hash of the method that binds script functions
 const BIND_FUNCTION_HASH: u32 = 777921665;

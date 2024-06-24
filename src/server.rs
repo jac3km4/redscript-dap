@@ -1,59 +1,96 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use std::net::{SocketAddr, TcpListener};
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::{fmt, io, thread};
+use std::{env, fmt, io, thread};
 
 use dap::prelude::*;
 use dap::server::ServerOutput;
 use parking::{Parker, Unparker};
-use red4rs::{ArrayType, IScriptable, Property, Type, ValueContainer, ValuePtr};
+use red4rs::{log, ArrayType, IScriptable, PluginSyntax, Property, Type, ValueContainer, ValuePtr};
 use thiserror::Error;
 
 use crate::control::{FunctionId, StepMode};
 use crate::state::{DebugState, Scope};
-use crate::{BreakpointKey, StackFramePtr, CONTROL};
+use crate::{BreakpointKey, RedscriptDap, StackFramePtr, CONTROL};
 
 type DynResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Debug)]
 pub struct ServerHandle {
     sender: OnceLock<SyncSender<DebugEvent>>,
-    port: u16,
 }
 
 impl ServerHandle {
     #[inline]
-    pub const fn new(port: u16) -> Self {
+    pub const fn new() -> Self {
         Self {
             sender: OnceLock::new(),
-            port,
         }
     }
 
     #[inline]
     pub fn sender(&self) -> &SyncSender<DebugEvent> {
-        self.sender.get_or_init(|| ServerHandle::init(self.port))
+        self.sender.get_or_init(ServerHandle::init)
     }
 
-    fn init(port: u16) -> SyncSender<DebugEvent> {
+    fn init() -> SyncSender<DebugEvent> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(0);
 
         thread::spawn(move || {
-            let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))?;
+            let env = RedscriptDap::env();
+
+            let listener = match TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))) {
+                Ok(listener) => listener,
+                Err(err) => {
+                    log::error!(env, "Failed to bind debug server: {err}");
+                    return;
+                }
+            };
+
+            let addr = listener.local_addr().expect("should have a local address");
+            log::info!(env, "Bound the debug server at {addr}");
+
+            if let Err(err) = Self::create_port_file(addr.port()) {
+                log::error!(env, "Failed to create port file: {err}");
+            }
+
             for stream in listener.incoming().flatten() {
                 let server = Server::new(BufReader::new(&stream), BufWriter::new(&stream));
                 let result = DebugSession::run(server, &receiver);
                 if let Err(err) = result {
-                    eprintln!("Error: {}", err);
+                    log::error!(env, "Failed during debug session: {err}");
                 }
             }
-            DynResult::Ok(())
         });
+
         sender
+    }
+
+    fn create_port_file(port: u16) -> DynResult<()> {
+        // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea
+        const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x04000000;
+        static FILE: OnceLock<File> = OnceLock::new();
+
+        let path = env::current_exe()?
+            .parent()
+            .ok_or("exe had no parent")?
+            .join(format!("dap.{port}.debug"));
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+            .open(path)?;
+
+        // write it to a static variable to keep it alive until program termination
+        FILE.set(file).map_err(|_| "file already set")?;
+
+        Ok(())
     }
 }
 
@@ -279,10 +316,6 @@ where
                 ));
                 self.server.respond(res)?;
             }
-
-            Command::Source(_) => {
-                // TODO source
-            }
             Command::StackTrace(args) => {
                 let guard = self.state.read().unwrap();
                 let start = args.start_frame.unwrap_or(0) as usize;
@@ -436,6 +469,9 @@ where
                     variables,
                 }));
                 self.server.respond(res)?;
+            }
+            Command::Source(_) | Command::Evaluate(_) => {
+                // TODO
             }
             _ => return Err(Box::new(Error::UnhandledCommand)),
         };
