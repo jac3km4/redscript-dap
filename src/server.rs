@@ -1,13 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
 use std::net::{SocketAddr, TcpListener};
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::{env, fmt, io, thread};
+use std::{env, fmt, io, mem, thread};
 
 use dap::prelude::*;
 use dap::server::ServerOutput;
@@ -75,7 +75,6 @@ impl ServerHandle {
     fn create_port_file(port: u16) -> DynResult<()> {
         // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea
         const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x04000000;
-        static FILE: OnceLock<File> = OnceLock::new();
 
         let path = env::current_exe()?
             .parent()
@@ -87,8 +86,8 @@ impl ServerHandle {
             .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
             .open(path)?;
 
-        // write it to a static variable to keep it alive until program termination
-        FILE.set(file).map_err(|_| "file already set")?;
+        // leak the file handle, it will be closed when the process exits
+        mem::forget(file);
 
         Ok(())
     }
