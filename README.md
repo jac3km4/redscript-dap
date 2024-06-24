@@ -6,7 +6,7 @@ https://github.com/jac3km4/redscript-dap/assets/11986158/728a3de0-1d6d-47d4-8e9a
 # requirements
 - [redscript](https://github.com/jac3km4/redscript) 0.5.25 or newer
 - [red4ext](https://github.com/WopsS/RED4ext) 1.25.0 or newer
-- [redscript IDE VSCode extension](https://marketplace.visualstudio.com/items?itemName=jac3km4.redscript-ide-vscode) 0.2.5 or newer
+- [redscript IDE VSCode extension](https://marketplace.visualstudio.com/items?itemName=jac3km4.redscript-ide-vscode) 0.2.6 or newer
 - optionally RedMod DLC in Steam/GoG if you intend to debug built-in game scripts
 
 # usage
