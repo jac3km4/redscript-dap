@@ -1,10 +1,13 @@
 use std::{mem, panic, ptr};
 
 use control::{BreakpointKey, DebugControl, FunctionId, StepMode};
+use red4rs::types::{
+    CName, Function, IScriptable, Instr, InvokeStatic, InvokeVirtual, RedString, StackFrame,
+    CALL_INSTR_SIZE, OPCODE_SIZE,
+};
 use red4rs::{
-    export_plugin, hashes, hooks, wcstr, CName, Function, GameApp, IScriptable, Instr,
-    InvokeStatic, InvokeVirtual, OpcodeHandler, Plugin, PluginSyntax, SdkEnv, SemVer, StackFrame,
-    StateListener, StateType, U16CStr, VoidPtr, CALL_INSTR_SIZE, OPCODE_SIZE,
+    export_plugin, hashes, hooks, wcstr, GameApp, Plugin, PluginOps, SdkEnv, SemVer, StateListener,
+    StateType, U16CStr, VoidPtr,
 };
 use server::{DebugEvent, EventCause, ServerHandle};
 use static_assertions::const_assert_eq;
@@ -63,7 +66,13 @@ impl Plugin for RedscriptDap {
 }
 
 unsafe extern "C" fn on_app_init(_app: &GameApp) {
-    let handlers = hashes::resolve(hashes::OpcodeHandlers) as *const OpcodeHandler;
+    let handlers = hashes::resolve(hashes::OpcodeHandlers)
+        as *const unsafe extern "C" fn(
+            i: *mut IScriptable,
+            f: *mut StackFrame,
+            a3: VoidPtr,
+            a4: VoidPtr,
+        );
 
     let invoke_static_handler = *handlers.add(InvokeStatic::OPCODE.into());
     let invoke_virtual_handler = *handlers.add(InvokeVirtual::OPCODE.into());
@@ -110,7 +119,7 @@ unsafe extern "C" fn on_invoke_static(
     f: *mut StackFrame,
     a3: VoidPtr,
     a4: VoidPtr,
-    cb: OpcodeHandler,
+    cb: unsafe extern "C" fn(i: *mut IScriptable, f: *mut StackFrame, a3: VoidPtr, a4: VoidPtr),
 ) {
     let frame = &*f;
     if !frame.has_code() {
@@ -131,7 +140,7 @@ unsafe extern "C" fn on_invoke_virtual(
     f: *mut StackFrame,
     a3: VoidPtr,
     a4: VoidPtr,
-    cb: OpcodeHandler,
+    cb: unsafe extern "C" fn(i: *mut IScriptable, f: *mut StackFrame, a3: VoidPtr, a4: VoidPtr),
 ) {
     let frame = &*f;
     if !frame.has_code() {
@@ -217,7 +226,7 @@ struct SourceFileInfo {
     crc: u32,
     index: u32,
     path_hash: u32,
-    path: red4rs::String,
+    path: RedString,
 }
 
 const_assert_eq!(mem::size_of::<SourceFileInfo>(), 72);

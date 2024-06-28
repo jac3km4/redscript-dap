@@ -12,7 +12,8 @@ use std::{env, fmt, io, mem, thread};
 use dap::prelude::*;
 use dap::server::ServerOutput;
 use parking::{Parker, Unparker};
-use red4rs::{log, ArrayType, IScriptable, PluginSyntax, Property, Type, ValueContainer, ValuePtr};
+use red4rs::types::{ArrayType, IScriptable, Property, Type, ValueContainer, ValuePtr};
+use red4rs::{log, PluginOps};
 use thiserror::Error;
 
 use crate::control::{FunctionId, StepMode};

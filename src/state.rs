@@ -1,6 +1,6 @@
 use std::iter;
 
-use red4rs::{ArrayType, Class, ValueContainer, ValuePtr};
+use red4rs::types::{ArrayType, Class, ValueContainer, ValuePtr};
 use slab::Slab;
 
 use crate::server::DebugEvent;

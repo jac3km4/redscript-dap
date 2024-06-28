@@ -12,7 +12,7 @@ slab = "0.4"
 parking = "2"
 dap = "0.4.1-alpha1"
 static_assertions = "1"
-red4rs = { git = "https://github.com/jac3km4/red4rs", rev = "78a63c6" }
+red4rs = { git = "https://github.com/jac3km4/red4rs", rev = "36f8dfa" }
 
 [lints.rust]
 warnings = "warn"
@@ -39,5 +39,6 @@ inefficient_to_string = "warn"
 match_bool = "warn"
 
 [profile.release]
+codegen-units = 1
 panic = 'abort'
 lto = true

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{env, ptr};
 
-use red4rs::{CName, Class, Function, StackFrame};
+use red4rs::types::{CName, Class, Function, StackFrame};
 
 use crate::SourceFileInfo;
 
@@ -166,7 +166,7 @@ impl FunctionMapping {
     fn add_source(&mut self, source: &SourceFileInfo) -> Arc<str> {
         self.hash_to_path
             .entry(source.path_hash)
-            .or_insert_with(|| adapt_path(source.path.as_ref()))
+            .or_insert_with(|| adapt_path(&source.path.to_string_lossy()))
             .clone()
     }
 
@@ -269,16 +269,17 @@ fn adapt_path(path_str: &str) -> Arc<str> {
     let mut path: Arc<str> = if path.extension() != Some(OsStr::new("reds")) {
         // if it's not redscript we point to the redmod scripts
         (|| {
-            let res = env::current_exe()
+            let mut redmod = env::current_exe()
                 .ok()?
                 .parent()?
                 .parent()?
                 .parent()?
-                .join("tools")
-                .join("redmod")
-                .join("scripts")
-                .join(path);
-            Some(res.to_string_lossy().into())
+                .to_owned();
+            redmod.push("tools");
+            redmod.push("redmod");
+            redmod.push("scripts");
+            redmod.push(path);
+            Some(redmod.to_string_lossy().into())
         })()
         .unwrap_or_else(|| path_str.into())
     } else {
