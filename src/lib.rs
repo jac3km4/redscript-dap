@@ -1,11 +1,11 @@
 use std::{mem, panic, ptr};
 
 use control::{BreakpointKey, DebugControl, FunctionId, StepMode};
-use red4rs::types::{
+use red4ext_rs::types::{
     CName, Function, IScriptable, Instr, InvokeStatic, InvokeVirtual, RedString, StackFrame,
     CALL_INSTR_SIZE, OPCODE_SIZE,
 };
-use red4rs::{
+use red4ext_rs::{
     export_plugin, hashes, hooks, wcstr, GameApp, Plugin, PluginOps, SdkEnv, SemVer, StateListener,
     StateType, U16CStr, VoidPtr,
 };

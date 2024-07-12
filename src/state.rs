@@ -1,6 +1,6 @@
 use std::iter;
 
-use red4rs::types::{ArrayType, Class, ValueContainer, ValuePtr};
+use red4ext_rs::types::{ArrayType, CName, ValueContainer, ValuePtr};
 use slab::Slab;
 
 use crate::server::DebugEvent;
@@ -52,9 +52,9 @@ impl DebugState {
 pub enum Scope {
     Locals(StackFramePtr),
     Params(StackFramePtr),
-    Object(ValueContainer, &'static Class),
-    Struct(ValueContainer, &'static Class),
-    Array(ValuePtr, &'static ArrayType),
+    Object(ValueContainer, CName),
+    Struct(ValueContainer, CName),
+    Array(ValuePtr, *const ArrayType),
 }
 
 unsafe impl Send for Scope {}

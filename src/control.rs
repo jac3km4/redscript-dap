@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{env, ptr};
 
-use red4rs::types::{CName, Class, Function, StackFrame};
+use red4ext_rs::types::{CName, Class, Function, StackFrame};
 
 use crate::SourceFileInfo;
 

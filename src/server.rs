@@ -12,8 +12,10 @@ use std::{env, fmt, io, mem, thread};
 use dap::prelude::*;
 use dap::server::ServerOutput;
 use parking::{Parker, Unparker};
-use red4rs::types::{ArrayType, IScriptable, Property, Type, ValueContainer, ValuePtr};
-use red4rs::{log, PluginOps};
+use red4ext_rs::types::{
+    ArrayType, Class, IScriptable, Property, TaggedType, Type, ValueContainer, ValuePtr,
+};
+use red4ext_rs::{log, PluginOps, RttiSystem};
 use thiserror::Error;
 
 use crate::control::{FunctionId, StepMode};
@@ -427,8 +429,11 @@ where
                         let frame = unsafe { frame.as_ref() };
                         let mut variables = vec![];
 
-                        if let Some(this) = frame.context().filter(|_| !frame.func().is_static()) {
-                            let scope = Scope::Object(this.fields(), this.class());
+                        if let Some(this) = frame
+                            .context()
+                            .filter(|_| !frame.func().flags().is_static())
+                        {
+                            let scope = Scope::Object(this.fields(), this.class().name());
                             let variable = self.state.write().unwrap().add_scope(scope);
                             variables.push(types::Variable {
                                 name: "this".to_owned(),
@@ -447,14 +452,26 @@ where
                         self.named_variables(frame.params(), frame.func().params().iter().copied())
                             .collect::<Vec<_>>()
                     }
-                    Scope::Array(ptr, typ) => self.array_variables(ptr, typ).collect::<Vec<_>>(),
-                    Scope::Object(ptr, typ) => {
-                        let props = typ.all_properties().filter(|p| p.is_in_value_holder());
+                    Scope::Array(ptr, typ) => self
+                        .array_variables(ptr, unsafe { &*typ })
+                        .collect::<Vec<_>>(),
+                    Scope::Object(ptr, name) => {
+                        let rtti = RttiSystem::get();
+                        let props = rtti
+                            .get_class(name)
+                            .into_iter()
+                            .flat_map(Class::all_properties)
+                            .filter(|p| p.flags().in_value_holder());
                         self.named_variables(ptr, props).collect::<Vec<_>>()
                     }
-                    Scope::Struct(ptr, typ) => self
-                        .named_variables(ptr, typ.all_properties())
-                        .collect::<Vec<_>>(),
+                    Scope::Struct(ptr, typ) => {
+                        let rtti = RttiSystem::get();
+                        let props = rtti
+                            .get_class(typ)
+                            .into_iter()
+                            .flat_map(Class::all_properties);
+                        self.named_variables(ptr, props).collect::<Vec<_>>()
+                    }
                 };
                 let start = vars.start.unwrap_or(0) as usize;
                 let end = vars
@@ -499,22 +516,23 @@ where
             .map(move |i| self.variable(i, unsafe { typ.element(value, i) }, inner))
     }
 
-    fn variable(
-        &mut self,
-        name: impl ToString,
-        value: ValuePtr,
-        typ: &'static Type,
-    ) -> types::Variable {
+    fn variable(&mut self, name: impl ToString, value: ValuePtr, typ: &Type) -> types::Variable {
         let mut name = name.to_string();
         name.truncate(name.find('$').unwrap_or(name.len()));
 
-        let scope = if typ.kind().is_pointer() {
-            unsafe { value.unwrap_ref() }.map(|inst| Scope::Object(inst.fields(), inst.class()))
-        } else if let Some(class) = typ.as_class() {
-            Some(Scope::Struct(unsafe { value.to_container() }, class))
-        } else {
-            typ.as_array().map(|array| Scope::Array(value, array))
+        let scope = match typ.tagged() {
+            TaggedType::Class(class) => {
+                Some(Scope::Struct(unsafe { value.to_container() }, class.name()))
+            }
+            TaggedType::Ref(_) | TaggedType::WeakRef(_) => unsafe { value.unwrap_ref() }
+                .map(|inst| Scope::Object(inst.fields(), inst.class().name())),
+            TaggedType::Array(_)
+            | TaggedType::StaticArray(_)
+            | TaggedType::NativeArray(_)
+            | TaggedType::FixedArray(_) => Some(Scope::Array(value, typ.as_array().unwrap())),
+            _ => None,
         };
+
         let variable = scope.map_or(0, |scope| self.state.write().unwrap().add_scope(scope));
 
         types::Variable {
@@ -606,35 +624,38 @@ impl<'a> ValueFormatter<'a> {
 
 impl fmt::Display for ValueFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.typ.kind().is_pointer() {
-            let inst = unsafe { self.value.unwrap_ref() };
-            let Some(inst) = inst else {
-                return write!(f, "null");
-            };
-            if !self.visited.borrow_mut().insert(inst as _) {
-                return write!(f, "<cyclic>");
-            }
-            write!(f, "{{",)?;
-
-            let mut prop_it = inst
-                .class()
-                .all_properties()
-                .filter(|p| p.is_in_value_holder());
-            for prop in prop_it.by_ref().take(8) {
-                let inner = Self {
-                    value: unsafe { prop.value(inst.fields()) },
-                    typ: prop.type_(),
-                    visited: self.visited.clone(),
+        match self.typ.tagged() {
+            TaggedType::Ref(_) | TaggedType::WeakRef(_) => {
+                let inst = unsafe { self.value.unwrap_ref() };
+                let Some(inst) = inst else {
+                    return write!(f, "null");
                 };
-                write!(f, "{}: {}, ", prop.name().as_str(), inner)?;
-            }
-            if prop_it.next().is_some() {
-                write!(f, "...")?;
-            }
+                if !self.visited.borrow_mut().insert(inst as _) {
+                    return write!(f, "<cyclic>");
+                }
+                write!(f, "{{",)?;
 
-            write!(f, "}}")
-        } else {
-            write!(f, "{}", unsafe { self.typ.to_string(self.value) })
+                let mut prop_it = inst
+                    .class()
+                    .all_properties()
+                    .filter(|p| p.flags().in_value_holder());
+                for prop in prop_it.by_ref().take(8) {
+                    let inner = ValueFormatter {
+                        value: unsafe { prop.value(inst.fields()) },
+                        typ: prop.type_(),
+                        visited: self.visited.clone(),
+                    };
+                    write!(f, "{}: {}, ", prop.name().as_str(), inner)?;
+                }
+                if prop_it.next().is_some() {
+                    write!(f, "...")?;
+                }
+
+                write!(f, "}}")
+            }
+            _ => {
+                write!(f, "{}", unsafe { self.typ.to_string(self.value) })
+            }
         }
     }
 }
