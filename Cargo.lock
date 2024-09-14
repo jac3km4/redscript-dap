@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "redscript-dap"
-version = "0.0.6-dev"
+version = "0.0.6"
 dependencies = [
  "dap",
  "parking",
