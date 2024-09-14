@@ -6,8 +6,8 @@ use red4ext_rs::types::{
     CALL_INSTR_SIZE, OPCODE_SIZE,
 };
 use red4ext_rs::{
-    export_plugin, hashes, hooks, wcstr, GameApp, Plugin, PluginOps, SdkEnv, SemVer, StateListener,
-    StateType, U16CStr, VoidPtr,
+    export_plugin_symbols, addr_hashes, hooks, wcstr, GameApp, Plugin, PluginOps, SdkEnv, SemVer,
+    StateListener, StateType, U16CStr, VoidPtr,
 };
 use server::{DebugEvent, EventCause, ServerHandle};
 use static_assertions::const_assert_eq;
@@ -35,15 +35,15 @@ hooks! {
 
 struct RedscriptDap;
 
-export_plugin!(RedscriptDap);
+export_plugin_symbols!(RedscriptDap);
 
 impl Plugin for RedscriptDap {
     const AUTHOR: &'static U16CStr = wcstr!("jekky");
     const NAME: &'static U16CStr = wcstr!("redscript-dap");
-    const VERSION: SemVer = SemVer::new(0, 1, 0);
+    const VERSION: SemVer = SemVer::new(0, 0, 6);
 
     fn on_init(env: &SdkEnv) {
-        let bind_function_addr = hashes::resolve(BIND_FUNCTION_HASH);
+        let bind_function_addr = addr_hashes::resolve(BIND_FUNCTION_HASH);
         // set up the function bind hook first because it happens on initialization
         unsafe {
             env.attach_hook(
@@ -66,7 +66,7 @@ impl Plugin for RedscriptDap {
 }
 
 unsafe extern "C" fn on_app_init(_app: &GameApp) {
-    let handlers = hashes::resolve(hashes::OpcodeHandlers)
+    let handlers = addr_hashes::resolve(addr_hashes::OpcodeHandlers)
         as *const unsafe extern "C" fn(
             i: *mut IScriptable,
             f: *mut StackFrame,

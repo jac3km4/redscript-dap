@@ -1,6 +1,6 @@
 [package]
 name = "redscript-dap"
-version = "0.1.0"
+version = "0.0.6-dev"
 edition = "2021"
 
 [lib]
@@ -12,7 +12,7 @@ slab = "0.4"
 parking = "2"
 dap = "0.4.1-alpha1"
 static_assertions = "1"
-red4ext-rs = { git = "https://github.com/jac3km4/red4ext-rs", rev = "v0.6.1" }
+red4ext-rs = { git = "https://github.com/jac3km4/red4ext-rs", rev = "v0.9.0" }
 
 [lints.rust]
 warnings = "warn"
@@ -42,3 +42,7 @@ match_bool = "warn"
 codegen-units = 1
 panic = 'abort'
 lto = true
+
+[package.metadata.release]
+pre-release-commit-message = "chore: bump version"
+publish = false

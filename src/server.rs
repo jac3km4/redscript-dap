@@ -511,7 +511,7 @@ where
         value: ValuePtr,
         typ: &'a ArrayType,
     ) -> impl Iterator<Item = types::Variable> + 'a {
-        let inner = typ.inner_type();
+        let inner = typ.element_type();
         (0..unsafe { typ.length(value) })
             .map(move |i| self.variable(i, unsafe { typ.element(value, i) }, inner))
     }
