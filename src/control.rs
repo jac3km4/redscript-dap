@@ -194,6 +194,10 @@ impl BreakpointKey {
     pub fn new(func: FunctionId, line: u16) -> Self {
         Self { func, line }
     }
+
+    pub fn line(&self) -> u16 {
+        self.line
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

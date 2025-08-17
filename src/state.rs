@@ -1,16 +1,18 @@
-use std::iter;
+use std::{iter, mem};
 
+use dap::requests::SetBreakpointsArguments;
 use red4ext_rs::types::{ArrayType, CName, ValueContainer, ValuePtr};
 use slab::Slab;
 
 use crate::StackFramePtr;
-use crate::server::DebugEvent;
+use crate::server::BreakpointEvent;
 
 #[derive(Debug, Default)]
 pub struct DebugState {
     scopes: Slab<Scope>,
     frames: Vec<StackFramePtr>,
-    current: Option<DebugEvent>,
+    current: Option<BreakpointEvent>,
+    uninitialized: UninitializedState,
 }
 
 impl DebugState {
@@ -31,11 +33,11 @@ impl DebugState {
     }
 
     #[inline]
-    pub fn take_event(&mut self) -> Option<DebugEvent> {
+    pub fn take_event(&mut self) -> Option<BreakpointEvent> {
         self.current.take()
     }
 
-    pub fn reset(&mut self, ev: DebugEvent) {
+    pub fn reset(&mut self, ev: BreakpointEvent) {
         let frame = ev.frame();
         let parents = unsafe { frame.as_ref() }
             .parent_iter()
@@ -45,6 +47,37 @@ impl DebugState {
         self.frames.clear();
         self.frames.extend(iter::once(frame).chain(parents));
         self.current = Some(ev);
+    }
+
+    pub fn mark_ready(&mut self) -> Vec<SetBreakpointsArguments> {
+        if let UninitializedState::Uninitialized(pending) = mem::take(&mut self.uninitialized) {
+            self.uninitialized = UninitializedState::Initialized;
+            pending
+        } else {
+            vec![]
+        }
+    }
+
+    pub fn enqueue(&mut self, args: SetBreakpointsArguments) -> Option<SetBreakpointsArguments> {
+        match &mut self.uninitialized {
+            UninitializedState::Uninitialized(queue) => {
+                queue.push(args);
+                None
+            }
+            UninitializedState::Initialized => Some(args),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum UninitializedState {
+    Uninitialized(Vec<SetBreakpointsArguments>),
+    Initialized,
+}
+
+impl Default for UninitializedState {
+    fn default() -> Self {
+        UninitializedState::Uninitialized(Vec::new())
     }
 }
 

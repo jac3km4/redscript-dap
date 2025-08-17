@@ -141,7 +141,15 @@ where
             });
             loop {
                 match receiver.try_recv() {
-                    Ok(ev) => Self::handle_event(&state, &output, ev)?,
+                    Ok(DebugEvent::GameInitialized) => {
+                        log::info!(RedscriptDap::env(), "Game initialized");
+
+                        let mut state = state.write().unwrap();
+                        for args in state.mark_ready() {
+                            create_breakpoints(args)?;
+                        }
+                    }
+                    Ok(DebugEvent::Breakpoint(bp)) => Self::handle_breakpoint(&state, &output, bp)?,
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => break,
                 }
@@ -160,17 +168,17 @@ where
             ev.unpark();
         };
         // allow all waiting threads to continue
-        while let Ok(ev) = receiver.try_recv() {
+        while let Ok(DebugEvent::Breakpoint(ev)) = receiver.try_recv() {
             ev.unpark();
         }
 
         result
     }
 
-    fn handle_event(
+    fn handle_breakpoint(
         state: &RwLock<DebugState>,
         output: &Mutex<ServerOutput<W>>,
-        ev: DebugEvent,
+        ev: BreakpointEvent,
     ) -> DynResult<()> {
         let reason = match ev.cause {
             EventCause::Breakpoint => types::StoppedEventReason::Breakpoint,
@@ -278,43 +286,12 @@ where
                 self.server.respond(res)?;
             }
             Command::SetBreakpoints(args) => {
-                let Some(path) = args.source.path.as_deref() else {
-                    let res = req.success(ResponseBody::SetBreakpoints(
-                        responses::SetBreakpointsResponse {
-                            breakpoints: vec![],
-                        },
-                    ));
-                    self.server.respond(res)?;
-                    return Ok(Outcome::Continue);
+                let mut state = self.state.write().unwrap();
+                let breakpoints = if let Some(args) = state.enqueue(args.clone()) {
+                    create_breakpoints(args)?
+                } else {
+                    vec![]
                 };
-
-                let (breakpoints, pending): (Vec<_>, Vec<_>) = args
-                    .breakpoints
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|bp| {
-                        let line = bp.line as u16;
-                        let func = CONTROL.functions().get_by_loc(path, line.into())?;
-                        let pending = BreakpointKey::new(func, line);
-                        let bp = types::Breakpoint {
-                            verified: true,
-                            source: Some(args.source.clone()),
-                            line: Some(bp.line),
-                            ..Default::default()
-                        };
-                        Some((bp, pending))
-                    })
-                    .unzip();
-
-                let mut bp_guard = CONTROL.breakpoints_mut();
-                for func in CONTROL.functions().get_by_file(path) {
-                    bp_guard.unregister_by_fn(func);
-                }
-                for bp in pending {
-                    bp_guard.add(bp);
-                }
-
                 let res = req.success(ResponseBody::SetBreakpoints(
                     responses::SetBreakpointsResponse { breakpoints },
                 ));
@@ -547,6 +524,47 @@ where
     }
 }
 
+fn create_breakpoints(
+    args: requests::SetBreakpointsArguments,
+) -> DynResult<Vec<types::Breakpoint>> {
+    let Some(path) = args.source.path.as_deref() else {
+        return Ok(vec![]);
+    };
+
+    let (breakpoints, pending): (Vec<_>, Vec<_>) = args
+        .breakpoints
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|bp| {
+            let line = bp.line as u16;
+            let func = CONTROL.functions().get_by_loc(path, line.into())?;
+            let pending = BreakpointKey::new(func, line);
+            let bp = types::Breakpoint {
+                verified: true,
+                source: Some(args.source.clone()),
+                line: Some(bp.line),
+                ..Default::default()
+            };
+            Some((bp, pending))
+        })
+        .unzip();
+    let mut bp_guard = CONTROL.breakpoints_mut();
+    for func in CONTROL.functions().get_by_file(path) {
+        bp_guard.unregister_by_fn(func);
+    }
+    for bp in pending {
+        log::info!(
+            RedscriptDap::env(),
+            "Registering a breakpoint at {path}:{}",
+            bp.line()
+        );
+
+        bp_guard.add(bp);
+    }
+    Ok(breakpoints)
+}
+
 #[derive(Debug)]
 enum Outcome {
     Shutdown,
@@ -568,15 +586,20 @@ enum Error {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
-pub struct DebugEvent {
+pub enum DebugEvent {
+    GameInitialized,
+    Breakpoint(BreakpointEvent),
+}
+
+#[derive(Debug)]
+pub struct BreakpointEvent {
     key: BreakpointKey,
     cause: EventCause,
     frame: StackFramePtr,
     unparker: Unparker,
 }
 
-impl DebugEvent {
+impl BreakpointEvent {
     pub fn new(key: BreakpointKey, cause: EventCause, frame: StackFramePtr) -> (Self, Parker) {
         let (parker, unparker) = parking::pair();
         (

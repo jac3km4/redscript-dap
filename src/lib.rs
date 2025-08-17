@@ -10,8 +10,10 @@ use red4ext_rs::{
     GameApp, Plugin, PluginOps, SdkEnv, SemVer, StateListener, StateType, U16CStr, VoidPtr,
     addr_hashes, export_plugin_symbols, hooks, wcstr,
 };
-use server::{DebugEvent, EventCause, ServerHandle};
+use server::{BreakpointEvent, EventCause, ServerHandle};
 use static_assertions::const_assert_eq;
+
+use crate::server::DebugEvent;
 
 mod control;
 mod server;
@@ -93,6 +95,8 @@ unsafe extern "C" fn on_app_init(_app: &GameApp) {
             on_invoke_virtual,
         );
     };
+
+    SERVER.sender().send(DebugEvent::GameInitialized).ok();
 }
 
 unsafe extern "C" fn on_bind_function(
@@ -199,8 +203,8 @@ fn post_call(frame: &StackFrame, line: u16) {
 }
 
 fn breakpoint(key: BreakpointKey, cause: EventCause, frame: StackFramePtr) {
-    let (ev, parker) = DebugEvent::new(key, cause, frame);
-    if SERVER.sender().send(ev).is_ok() {
+    let (ev, parker) = BreakpointEvent::new(key, cause, frame);
+    if SERVER.sender().send(DebugEvent::Breakpoint(ev)).is_ok() {
         CONTROL.set_last_break_frame(frame.as_ptr());
         CONTROL.set_step_mode(StepMode::None);
 
