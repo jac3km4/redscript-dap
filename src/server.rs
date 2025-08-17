@@ -15,12 +15,12 @@ use parking::{Parker, Unparker};
 use red4ext_rs::types::{
     ArrayType, Class, IScriptable, Property, TaggedType, Type, ValueContainer, ValuePtr,
 };
-use red4ext_rs::{log, PluginOps, RttiSystem};
+use red4ext_rs::{PluginOps, RttiSystem, log};
 use thiserror::Error;
 
 use crate::control::{FunctionId, StepMode};
 use crate::state::{DebugState, Scope};
-use crate::{BreakpointKey, RedscriptDap, StackFramePtr, CONTROL};
+use crate::{BreakpointKey, CONTROL, RedscriptDap, StackFramePtr};
 
 type DynResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -127,14 +127,16 @@ where
         let output = this.server.output.clone();
 
         let result = thread::scope(|scope| {
-            let task = scope.spawn::<_, DynResult<_>>(|| loop {
-                let req = match this.server.poll_request()? {
-                    Some(req) => req,
-                    None => return Err(Box::new(Error::MissingCommand)),
-                };
-                match this.handle_req(req)? {
-                    Outcome::Shutdown => break Ok(()),
-                    Outcome::Continue => {}
+            let task = scope.spawn::<_, DynResult<_>>(|| {
+                loop {
+                    let req = match this.server.poll_request()? {
+                        Some(req) => req,
+                        None => return Err(Box::new(Error::MissingCommand)),
+                    };
+                    match this.handle_req(req)? {
+                        Outcome::Shutdown => break Ok(()),
+                        Outcome::Continue => {}
+                    }
                 }
             });
             loop {
@@ -399,7 +401,8 @@ where
                 let Some(ev) = self.state.write().unwrap().take_event() else {
                     return Err(Box::new(Error::UnexpectedRequest));
                 };
-                if unsafe { ev.frame().as_ref() }.parent().is_some() {
+                let frame = ev.frame();
+                if unsafe { frame.as_ref() }.parent().is_some() {
                     CONTROL.set_step_mode(StepMode::StepOut);
                 }
                 ev.unpark();

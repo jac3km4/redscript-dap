@@ -1,18 +1,18 @@
 [package]
 name = "redscript-dap"
 version = "0.0.6"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-thiserror = "1"
+thiserror = "2"
 slab = "0.4"
 parking = "2"
 dap = "0.4.1-alpha1"
 static_assertions = "1"
-red4ext-rs = { git = "https://github.com/jac3km4/red4ext-rs", rev = "v0.9.0" }
+red4ext-rs = { git = "https://github.com/jac3km4/red4ext-rs", rev = "c44146c" }
 
 [lints.rust]
 warnings = "warn"

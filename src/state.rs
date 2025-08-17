@@ -3,8 +3,8 @@ use std::iter;
 use red4ext_rs::types::{ArrayType, CName, ValueContainer, ValuePtr};
 use slab::Slab;
 
-use crate::server::DebugEvent;
 use crate::StackFramePtr;
+use crate::server::DebugEvent;
 
 #[derive(Debug, Default)]
 pub struct DebugState {

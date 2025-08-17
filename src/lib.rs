@@ -1,13 +1,14 @@
+#![allow(dead_code)]
 use std::{mem, panic, ptr};
 
 use control::{BreakpointKey, DebugControl, FunctionId, StepMode};
 use red4ext_rs::types::{
-    CName, Function, IScriptable, Instr, InvokeStatic, InvokeVirtual, RedString, StackFrame,
-    CALL_INSTR_SIZE, OPCODE_SIZE,
+    CALL_INSTR_SIZE, CName, Function, IScriptable, Instr, InvokeStatic, InvokeVirtual, OPCODE_SIZE,
+    RedString, StackFrame,
 };
 use red4ext_rs::{
-    export_plugin_symbols, addr_hashes, hooks, wcstr, GameApp, Plugin, PluginOps, SdkEnv, SemVer,
-    StateListener, StateType, U16CStr, VoidPtr,
+    GameApp, Plugin, PluginOps, SdkEnv, SemVer, StateListener, StateType, U16CStr, VoidPtr,
+    addr_hashes, export_plugin_symbols, hooks, wcstr,
 };
 use server::{DebugEvent, EventCause, ServerHandle};
 use static_assertions::const_assert_eq;
@@ -74,22 +75,24 @@ unsafe extern "C" fn on_app_init(_app: &GameApp) {
             a4: VoidPtr,
         );
 
-    let invoke_static_handler = *handlers.add(InvokeStatic::OPCODE.into());
-    let invoke_virtual_handler = *handlers.add(InvokeVirtual::OPCODE.into());
+    let invoke_static_handler = unsafe { *handlers.add(InvokeStatic::OPCODE.into()) };
+    let invoke_virtual_handler = unsafe { *handlers.add(InvokeVirtual::OPCODE.into()) };
 
     // bind remaining hooks once the game is initialized
     // these are responsible for handling breakpoints and stepping
     let env = RedscriptDap::env();
-    env.attach_hook(
-        INVOKE_STATIC_HANDLER,
-        invoke_static_handler,
-        on_invoke_static,
-    );
-    env.attach_hook(
-        INVOKE_VIRTUAL_HANDLER,
-        invoke_virtual_handler,
-        on_invoke_virtual,
-    );
+    unsafe {
+        env.attach_hook(
+            INVOKE_STATIC_HANDLER,
+            invoke_static_handler,
+            on_invoke_static,
+        );
+        env.attach_hook(
+            INVOKE_VIRTUAL_HANDLER,
+            invoke_virtual_handler,
+            on_invoke_virtual,
+        );
+    };
 }
 
 unsafe extern "C" fn on_bind_function(
@@ -98,14 +101,14 @@ unsafe extern "C" fn on_bind_function(
     arg: VoidPtr,
     cb: unsafe extern "C" fn(this: VoidPtr, f: *mut FunctionInfo, arg2: VoidPtr) -> bool,
 ) -> bool {
-    let ret = cb(this, info, arg);
+    let ret = unsafe { cb(this, info, arg) };
 
-    let info = &*info;
+    let info = unsafe { &*info };
     if info.func.is_null() || info.source_info.is_null() {
         return ret;
     };
-    let func = &*info.func;
-    let source = &*info.source_info;
+    let func = unsafe { &*info.func };
+    let source = unsafe { &*info.source_info };
 
     CONTROL
         .functions_mut()
@@ -121,17 +124,17 @@ unsafe extern "C" fn on_invoke_static(
     a4: VoidPtr,
     cb: unsafe extern "C" fn(i: *mut IScriptable, f: *mut StackFrame, a3: VoidPtr, a4: VoidPtr),
 ) {
-    let frame = &*f;
+    let frame = unsafe { &*f };
     if !frame.has_code() {
-        return cb(i, f, a3, a4);
+        return unsafe { cb(i, f, a3, a4) };
     }
 
-    if let Some(instr) = frame.instr_at::<InvokeStatic>(-OPCODE_SIZE) {
+    if let Some(instr) = unsafe { frame.instr_at::<InvokeStatic>(-OPCODE_SIZE) } {
         pre_call(frame, instr.line);
-        cb(i, f, a3, a4);
+        unsafe { cb(i, f, a3, a4) };
         post_call(frame, instr.line);
     } else {
-        cb(i, f, a3, a4);
+        unsafe { cb(i, f, a3, a4) };
     }
 }
 
@@ -142,17 +145,17 @@ unsafe extern "C" fn on_invoke_virtual(
     a4: VoidPtr,
     cb: unsafe extern "C" fn(i: *mut IScriptable, f: *mut StackFrame, a3: VoidPtr, a4: VoidPtr),
 ) {
-    let frame = &*f;
+    let frame = unsafe { &*f };
     if !frame.has_code() {
-        return cb(i, f, a3, a4);
+        return unsafe { cb(i, f, a3, a4) };
     }
 
-    if let Some(instr) = frame.instr_at::<InvokeVirtual>(-OPCODE_SIZE) {
+    if let Some(instr) = unsafe { frame.instr_at::<InvokeVirtual>(-OPCODE_SIZE) } {
         pre_call(frame, instr.line);
-        cb(i, f, a3, a4);
+        unsafe { cb(i, f, a3, a4) };
         post_call(frame, instr.line);
     } else {
-        cb(i, f, a3, a4);
+        unsafe { cb(i, f, a3, a4) };
     }
 }
 
@@ -188,7 +191,7 @@ fn pre_call(frame: &StackFrame, line: u16) {
 fn post_call(frame: &StackFrame, line: u16) {
     if CONTROL.get_step_mode() == StepMode::StepOut {
         let last_parent = CONTROL.get_last_break_frame().and_then(StackFrame::parent);
-        if last_parent.map_or(false, |parent| ptr::eq(parent, frame)) {
+        if last_parent.is_some_and(|parent| ptr::eq(parent, frame)) {
             let key = BreakpointKey::new(FunctionId::from_func(frame.func()), line);
             breakpoint(key, EventCause::Step, StackFramePtr::PostCall(frame));
         }
@@ -252,12 +255,12 @@ impl StackFramePtr {
 
     #[inline]
     pub unsafe fn as_invoke_static(&self) -> Option<&InvokeStatic> {
-        unsafe { self.as_ref() }.instr_at::<InvokeStatic>(self.call_offset())
+        unsafe { self.as_ref().instr_at::<InvokeStatic>(self.call_offset()) }
     }
 
     #[inline]
     pub unsafe fn as_invoke_virtual(&self) -> Option<&InvokeVirtual> {
-        unsafe { self.as_ref() }.instr_at::<InvokeVirtual>(self.call_offset())
+        unsafe { self.as_ref().instr_at::<InvokeVirtual>(self.call_offset()) }
     }
 
     fn call_offset(&self) -> isize {
