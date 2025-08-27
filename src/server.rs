@@ -43,7 +43,7 @@ impl ServerHandle {
     }
 
     fn init() -> SyncSender<DebugEvent> {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
 
         thread::spawn(move || {
             let env = RedscriptDap::env();
